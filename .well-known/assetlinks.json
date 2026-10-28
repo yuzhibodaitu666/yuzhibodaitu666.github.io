@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.github.yuzhibodaitu666.synthstudio",
+        "sha256_cert_fingerprints": ["E0:F6:28:BA:E3:DB:3B:83:04:AE:3A:AA:6D:2A:79:ED:4F:6B:13:9D:B1:4D:F0:20:5A:2D:77:26:A7:1F:63:69"]
+      }
+    }]
