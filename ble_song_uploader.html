@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FPGA Synth Studio - V2.1 蓝牙上位机</title>
+    <!-- PWA：可安装、离线可用（配合 manifest.json + sw.js） -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#020617">
+    <link rel="icon" type="image/png" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 注意：不依赖 Tone.js，底层 MIDI 解析按 mid to text.py 思路用原生 JS 重写 -->
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased">
+
+    <!-- 顶部导航栏 -->
+    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse" id="conn-dot"></div>
+                <h1 class="text-xl font-bold tracking-wider bg-gradient-to-r from-cyan-400 to-indigo-500 bg-clip-text text-transparent">
+                    FPGA SYNTH STUDIO <span class="text-xs text-slate-400 font-normal">v2.1 BLE</span>
+                </h1>
+            </div>
+            <div>
+                <button id="btn-connect" onclick="toggleBluetooth()" class="px-5 py-2.5 rounded-xl font-semibold text-sm bg-indigo-600 hover:bg-indigo-500 active:scale-95 transition shadow-lg shadow-indigo-600/30 flex items-center space-x-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span id="conn-text">连接 JDY-23 蓝牙</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主体内容区 -->
+    <main class="max-w-6xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+        <!-- 左侧：MIDI 转换与下载面板 (占 2 列) -->
+        <div class="lg:col-span-2 space-y-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-semibold mb-4 flex items-center space-x-2 text-cyan-400">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+                    <span>曲谱加载与同步</span>
+                </h2>
+
+                <!-- 拖拽上传区域 -->
+                <div id="drop-zone" class="border-2 border-dashed border-slate-700 hover:border-cyan-500 rounded-xl p-8 text-center cursor-pointer transition bg-slate-950/50 group">
+                    <input type="file" id="midi-file-input" accept=".mid,.midi" class="hidden" onchange="handleFileSelect(event)">
+                    <div class="space-y-3">
+                        <div class="w-12 h-12 mx-auto rounded-full bg-slate-800 flex items-center justify-center group-hover:scale-110 transition text-cyan-400">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                        </div>
+                        <p class="text-sm text-slate-300">点击选择或将 <span class="text-cyan-400 font-medium">.mid 文件</span> 拖拽到此处</p>
+                        <p class="text-xs text-slate-500">解析逻辑与 mid to text.py 完全一致，严格匹配 V2.1 协议字格式</p>
+                    </div>
+                </div>
+
+                <!-- 曲谱参数配置表单 -->
+                <div id="config-panel" class="mt-6 space-y-4 hidden">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">歌曲名称 (LCD 显示，≤16英文/数字)</label>
+                            <input type="text" id="song-name-input" maxlength="16" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-cyan-500 uppercase">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">目标存储槽位 (推荐 4 ~ 7)</label>
+                            <select id="slot-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-cyan-500">
+                                <option value="4" selected>槽 4 (蓝牙下载区)</option>
+                                <option value="5">槽 5 (蓝牙下载区)</option>
+                                <option value="6">槽 6 (蓝牙下载区)</option>
+                                <option value="7">槽 7 (蓝牙下载区)</option>
+                                <option value="0">槽 0 (⚠️ 内置曲写保护)</option>
+                                <option value="1">槽 1 (⚠️ 内置曲写保护)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">时间精度 UNIT_DIV (同 Python 脚本)</label>
+                            <select id="unit-div-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-cyan-500">
+                                <option value="1">1 = 四分音符为一拍</option>
+                                <option value="2" selected>2 = 八分音符为一拍 (BPM×2)</option>
+                                <option value="4">4 = 十六分音符为一拍 (BPM×4)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 统计信息 -->
+                    <div class="bg-slate-950/60 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm border border-slate-800/80">
+                        <div>
+                            <span class="text-slate-500">提取音符数:</span> <span id="stat-notes" class="font-bold text-cyan-400">0</span>
+                        </div>
+                        <div>
+                            <span class="text-slate-500">解析 BPM:</span> <span id="stat-bpm" class="font-bold text-indigo-400">120</span>
+                        </div>
+                        <div>
+                            <span class="text-slate-500">分块数量:</span> <span id="stat-chunks" class="font-bold text-emerald-400">0</span>
+                        </div>
+                        <div>
+                            <span class="text-slate-500">选中音轨:</span> <span id="stat-track" class="font-bold text-amber-400">-</span>
+                        </div>
+                    </div>
+
+                    <!-- 音符预览 (对应 Python 脚本的打印预览) -->
+                    <div class="bg-slate-950/60 rounded-xl p-4 border border-slate-800/80">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs text-slate-500">音符字预览 {note[15:9], beat[8:0]} (前 8 个)</span>
+                            <button onclick="exportHexText()" class="text-xs px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-400 transition">导出 HEX 调试文本</button>
+                        </div>
+                        <div id="note-preview" class="font-mono text-xs text-slate-300 overflow-x-auto whitespace-nowrap"></div>
+                    </div>
+
+                    <!-- 进度条 -->
+                    <div id="progress-container" class="hidden space-y-2">
+                        <div class="flex justify-between text-xs text-slate-400">
+                            <span id="progress-status">准备发送...</span>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                        <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
+                            <div id="progress-bar" class="bg-gradient-to-r from-cyan-500 to-indigo-500 h-2.5 w-0 transition-all duration-200"></div>
+                        </div>
+                    </div>
+
+                    <!-- BLE 分块设置 -->
+                    <div class="flex items-center space-x-3 text-xs text-slate-400 bg-slate-950/60 rounded-xl p-3 border border-slate-800/80">
+                        <span class="shrink-0">BLE 分块写入 (手机建议 20 字节)：FPGA 按连续字节流解析，与写入边界无关</span>
+                        <select id="chunk-size-select" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs">
+                            <option value="20" selected>20 字节 (最稳，手机必选)</option>
+                            <option value="50">50 字节</option>
+                            <option value="100">100 字节</option>
+                            <option value="246">整帧一次写 (仅电脑大 MTU)</option>
+                        </select>
+                    </div>
+
+                    <!-- 发送按钮 -->
+                    <button onclick="startUpload()" id="btn-upload" class="w-full py-3 rounded-xl font-semibold bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 active:scale-[0.99] transition shadow-lg shadow-cyan-500/20 flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                        <span>烧录曲谱至 FPGA 槽位 (逐帧等回包)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 槽位管理面板 -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-semibold mb-4 flex items-center space-x-2 text-rose-400">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    <span>槽位管理 (0x05 删除曲谱)</span>
+                </h2>
+                <p class="text-xs text-slate-500 mb-4">发送 <span class="font-mono text-rose-400">A5 5A 05 01 [slot] XOR</span> 并等待回包：0x04=删除成功 / 0x05=删除被拒(该槽正在播放)。删除前请先停止该槽播放。</p>
+                <div class="grid grid-cols-4 md:grid-cols-8 gap-3" id="slot-grid">
+                    <!-- JS 动态生成 8 个槽位删除按钮 -->
+                </div>
+            </div>
+
+            <!-- 自定义键盘面板 -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-semibold mb-2 flex items-center space-x-2 text-indigo-400">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M3 9h2m-2 6h2m14-6h2m-2 6h2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9z"/></svg>
+                    <span>自定义键盘 (0x06 键位表)</span>
+                </h2>
+                <p class="text-xs text-slate-500 mb-4">
+                    发送 <span class="font-mono text-indigo-400">A5 5A 06 10 [key0..key15] XOR</span>，回包 0x00=成功、立即生效。
+                    MIDI 60=C4（中央 C），写 0 = 该键静音。⚠️ 板子<b class="text-amber-400">掉电恢复默认顺阶</b>，本页用浏览器本地存储记住上次发送的表，重连后一键补发即可。
+                </p>
+                <!-- 预设一键下发（协议 §8.4 推荐整帧） -->
+                <div class="flex flex-wrap gap-2 mb-4">
+                    <button onclick="applyPreset('scale')" class="px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600/80 hover:bg-indigo-500 active:scale-95 transition">大阶 SCALE_C</button>
+                    <button onclick="applyPreset('chrom')" class="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-800 border border-slate-700 hover:bg-slate-700 active:scale-95 transition">半音阶 CHROM</button>
+                    <button onclick="applyPreset('penta')" class="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-800 border border-slate-700 hover:bg-slate-700 active:scale-95 transition">五声 PENTA</button>
+                    <button onclick="applyPreset('chord')" class="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-800 border border-slate-700 hover:bg-slate-700 active:scale-95 transition">和弦 CHORD</button>
+                    <span class="text-xs text-slate-500 self-center">预设 = 加载并立即发送</span>
+                </div>
+                <!-- 16 键编辑网格 (JS 动态生成) -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="keymap-grid"></div>
+                <!-- 整表发送 -->
+                <button onclick="sendKeymap()" id="btn-keymap" class="mt-4 w-full py-3 rounded-xl font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:scale-[0.99] transition shadow-lg shadow-indigo-500/20 flex items-center justify-center space-x-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                    <span>发送整表 (16 键) 到板子</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 右侧：实时日志与回包监控 (占 1 列) -->
+        <div class="space-y-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col h-[520px]">
+                <h2 class="text-lg font-semibold mb-4 flex items-center justify-between text-indigo-400">
+                    <span class="flex items-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <span>通信监视器</span>
+                    </span>
+                    <button onclick="clearLog()" class="text-xs text-slate-500 hover:text-slate-300">清空</button>
+                </h2>
+                <div id="log-box" class="flex-1 bg-slate-950 rounded-xl p-4 font-mono text-xs overflow-y-auto space-y-2 border border-slate-800/80 text-slate-300">
+                    <div class="text-slate-600">[System] 网页端 App 已就绪，请点击右上角连接 JDY-23 蓝牙...</div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- 核心逻辑 JS -->
+    <script>
+        let bluetoothDevice = null;
+        let bluetoothCharacteristic = null;
+        let parsedNotes = [];   // [{pitch, beat}]
+        let parsedBpm = 120;
+        let chosenTrackIdx = -1;
+        let lastFrames03 = [];  // 0x03 帧缓存，用于导出调试文本
+        let lastFrame04 = null; // 0x04 帧缓存
+
+        // 日志输出函数
+        function log(msg, type = 'info') {
+            const box = document.getElementById('log-box');
+            const colorClass = type === 'error' ? 'text-rose-400' : type === 'success' ? 'text-emerald-400' : type === 'tx' ? 'text-cyan-400' : type === 'rx' ? 'text-amber-400' : 'text-slate-300';
+            box.innerHTML += `<div class="${colorClass}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log-box').innerHTML = '';
+        }
+
+        /* ==========================================================
+         * 底层 MIDI 解析器（原生 JS 实现，逻辑严格对齐 mid to text.py）
+         * - 逐事件解析 MThd / MTrk，支持 running status 与 VLQ delta time
+         * - 音轨评分选主旋律: score = unique_pitch*20 + min(count,200)，通道 9 排除，unique<=3 记 0 分
+         * - BPM 取全局最早的 set_tempo，按 unit_div 缩放并限幅 [40,240]
+         * - 抢占式单音化：note 只在其 note_off 或遇到更高音 note_on 时结束
+         * - 忽略曲首空白（第一个 note_on 时 acc 清零）
+         * ========================================================== */
+
+        // 变长数量 (VLQ) 读取
+        function readVlv(data, pos) {
+            let value = 0, byte;
+            do {
+                byte = data[pos++];
+                value = (value << 7) | (byte & 0x7F);
+            } while (byte & 0x80);
+            return { value, pos };
+        }
+
+        // 解析单个 MTrk，返回事件流 [{tick, type, note, velocity, channel, tempo}]
+        function parseTrackEvents(data, start, end) {
+            const events = [];
+            let pos = start, tick = 0, runningStatus = 0;
+            while (pos < end) {
+                const vlv = readVlv(data, pos);
+                tick += vlv.value;
+                pos = vlv.pos;
+                let status = data[pos];
+                if (status & 0x80) {
+                    pos++;
+                    if (status < 0xF0) runningStatus = status;
+                } else {
+                    status = runningStatus; // running status
+                }
+                const highNibble = status & 0xF0;
+                const channel = status & 0x0F;
+
+                if (status === 0xFF) { // Meta 事件
+                    const metaType = data[pos++];
+                    const lenVlv = readVlv(data, pos);
+                    pos = lenVlv.pos;
+                    if (metaType === 0x51 && lenVlv.value === 3) { // set_tempo
+                        const tempo = (data[pos] << 16) | (data[pos + 1] << 8) | data[pos + 2];
+                        events.push({ tick, type: 'set_tempo', tempo });
+                    }
+                    pos += lenVlv.value;
+                } else if (status === 0xF0 || status === 0xF7) { // SysEx
+                    const lenVlv = readVlv(data, pos);
+                    pos = lenVlv.pos + lenVlv.value;
+                } else if (highNibble === 0x90) { // note_on
+                    const note = data[pos], velocity = data[pos + 1];
+                    pos += 2;
+                    events.push({ tick, type: 'note_on', note, velocity, channel });
+                } else if (highNibble === 0x80) { // note_off
+                    const note = data[pos], velocity = data[pos + 1];
+                    pos += 2;
+                    events.push({ tick, type: 'note_off', note, velocity, channel });
+                } else if (highNibble === 0xA0 || highNibble === 0xB0 || highNibble === 0xE0) {
+                    pos += 2; // 两字节数据
+                } else if (highNibble === 0xC0 || highNibble === 0xD0) {
+                    pos += 1; // 一字节数据
+                } else {
+                    pos++; // 未知状态，防止死循环
+                }
+            }
+            return events;
+        }
+
+        // 解析整个 MIDI 文件，返回 { tracks: [事件流...], ticksPerBeat }
+        function parseMidiBytes(buffer) {
+            const data = new Uint8Array(buffer);
+            const dv = new DataView(buffer);
+            let pos = 0;
+            const readStr = (n) => String.fromCharCode(...data.slice(pos, pos + n));
+
+            if (readStr(4) !== 'MThd') throw new Error("不是有效的 MIDI 文件 (缺少 MThd 头)");
+            pos += 4;
+            const headerLen = dv.getUint32(pos); pos += 4;
+            const nFormat = dv.getUint16(pos); pos += 2;   // format 字段必须读掉，否则指针少 2 字节
+            const nTracks = dv.getUint16(pos); pos += 2;
+            const division = dv.getUint16(pos); pos += 2;
+            pos += headerLen - 6;
+            if (division & 0x8000) throw new Error("暂不支持 SMPTE 时间格式");
+
+            const tracks = [];
+            for (let t = 0; t < nTracks && pos + 8 <= data.length; t++) {
+                const id = readStr(4); pos += 4;
+                const len = dv.getUint32(pos); pos += 4;
+                if (id === 'MTrk') {
+                    tracks.push(parseTrackEvents(data, pos, pos + len));
+                }
+                pos += len;
+            }
+            if (tracks.length === 0) throw new Error("文件中没有有效音轨");
+            return { tracks, ticksPerBeat: division };
+        }
+
+        const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        function pitchToName(pitch) {
+            if (pitch === 0) return "REST";
+            return `${NOTE_NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`;
+        }
+
+        // === 移植自 Python: parse_midi_for_song_lib ===
+        function parseMidiForSongLib(buffer, unitDiv = 2, maxNotes = 511) {
+            const { tracks, ticksPerBeat } = parseMidiBytes(buffer);
+            const ticksPerUnit = ticksPerBeat / unitDiv;
+
+            // 1. 音轨评分选主旋律 (与 Python 完全一致)
+            let bestIdx = 0, bestScore = -1, bestTrack = null;
+            tracks.forEach((track, idx) => {
+                const pitches = [];
+                for (const ev of track) {
+                    if (ev.type === 'note_on' && ev.velocity > 0 && ev.channel !== 9) {
+                        pitches.push(ev.note);
+                    }
+                }
+                if (pitches.length === 0) return;
+                const uniquePitches = new Set(pitches).size;
+                let score = uniquePitches * 20 + Math.min(pitches.length, 200);
+                if (uniquePitches <= 3) score = 0;
+                if (score > bestScore) { bestScore = score; bestTrack = track; bestIdx = idx; }
+            });
+            if (bestTrack === null) throw new Error("所有音轨都没有有效音符 (或只有打击乐通道)");
+
+            // 2. BPM: 取全局最早出现的 set_tempo (对齐 mido.merge_tracks 语义)
+            let rawBpm = 120, bestTempoTick = Infinity;
+            tracks.forEach(track => {
+                for (const ev of track) {
+                    if (ev.type === 'set_tempo' && ev.tick < bestTempoTick) {
+                        bestTempoTick = ev.tick;
+                        rawBpm = Math.round(60000000 / ev.tempo);
+                        break; // 每条音轨只看第一个
+                    }
+                }
+            });
+            const scaledBpm = Math.min(240, Math.max(40, rawBpm * unitDiv));
+
+            // 3. 抢占式单音化提取 (与 Python 主循环逐行一致)
+            const notes = [];
+            let accTicks = 0, activeNote = null;
+            for (const ev of bestTrack) {
+                if (ev.channel === 9) continue;
+
+                if (ev.type === 'note_on' && ev.velocity > 0) {
+                    if (activeNote === null) {
+                        accTicks = 0;           // 忽略开头的空白
+                        activeNote = ev.note;
+                    } else {
+                        if (ev.note > activeNote) {
+                            const durBeats = Math.round(accTicks / ticksPerUnit);
+                            if (durBeats >= 1) {
+                                notes.push({ pitch: activeNote & 0x7F, beat: Math.min(511, durBeats) });
+                                accTicks = 0;
+                            }
+                            activeNote = ev.note;
+                        }
+                    }
+                } else if (ev.type === 'note_off' || (ev.type === 'note_on' && ev.velocity === 0)) {
+                    if (activeNote === ev.note) {
+                        const durBeats = Math.max(1, Math.round(accTicks / ticksPerUnit));
+                        notes.push({ pitch: activeNote & 0x7F, beat: Math.min(511, durBeats) });
+                        accTicks = 0;
+                        activeNote = null;
+                    }
+                }
+
+                if (notes.length >= maxNotes) break;
+            }
+
+            return { notes, bpm: scaledBpm, trackIdx: bestIdx };
+        }
+
+        // === 移植自 Python: format_lcd_song_name ===
+        function formatLcdSongName(rawName, slot) {
+            let cleaned = rawName.replace(/_/g, '-');
+            cleaned = cleaned.replace(/[^A-Za-z0-9 \-]/g, '').trim();
+            if (!cleaned) cleaned = `SONG${slot + 1}`;
+            cleaned = cleaned.slice(0, 16);
+            const asciiBytes = [];
+            for (let i = 0; i < cleaned.length; i++) asciiBytes.push(cleaned.charCodeAt(i));
+            while (asciiBytes.length < 16) asciiBytes.push(0x00);
+            return { cleaned, nameBytes: asciiBytes };
+        }
+
+        // 处理拖拽与文件选择
+        const dropZone = document.getElementById('drop-zone');
+        dropZone.addEventListener('click', () => document.getElementById('midi-file-input').click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-cyan-500', 'bg-slate-900'); });
+        dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('border-cyan-500', 'bg-slate-900'); });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-cyan-500', 'bg-slate-900');
+            if (e.dataTransfer.files.length > 0) processMidiFile(e.dataTransfer.files[0]);
+        });
+
+        function handleFileSelect(e) {
+            if (e.target.files.length > 0) processMidiFile(e.target.files[0]);
+        }
+
+        // 修改 UNIT_DIV 后用缓存的 buffer 重新解析
+        let lastMidiBuffer = null, lastFileName = "";
+        document.getElementById('unit-div-select').addEventListener('change', () => {
+            if (lastMidiBuffer) reparseFromBuffer();
+        });
+
+        async function processMidiFile(file) {
+            lastMidiBuffer = await file.arrayBuffer();
+            lastFileName = file.name;
+            reparseFromBuffer();
+        }
+
+        function reparseFromBuffer() {
+            try {
+                const unitDiv = parseInt(document.getElementById('unit-div-select').value);
+                log(`正在解析 MIDI 文件: ${lastFileName} (UNIT_DIV=${unitDiv})`, "info");
+                // 上限 511 而非 512：曲库页 lib_page.v 的音数 BCD 只取低 9 位（旧比特流），
+                // count=512 会被显示成空槽；RTL 修复重新综合后可改回 512
+                const result = parseMidiForSongLib(lastMidiBuffer, unitDiv, 511);
+                parsedNotes = result.notes;
+                parsedBpm = result.bpm;
+                chosenTrackIdx = result.trackIdx;
+
+                if (parsedNotes.length >= 511) {
+                    log("提示: 音符数达到 511 上限，后续音符已被截断", "error");
+                }
+
+                const slot = parseInt(document.getElementById('slot-select').value);
+                const baseName = lastFileName.includes('.') ? lastFileName.substring(0, lastFileName.lastIndexOf('.')) : lastFileName;
+                const { cleaned } = formatLcdSongName(baseName, slot);
+                document.getElementById('song-name-input').value = cleaned;
+
+                document.getElementById('stat-notes').innerText = parsedNotes.length;
+                document.getElementById('stat-bpm').innerText = parsedBpm;
+                document.getElementById('stat-chunks').innerText = Math.ceil((parsedNotes.length * 2) / 240);
+                document.getElementById('stat-track').innerText = `#${chosenTrackIdx}`;
+
+                // 音符字预览 (对应 Python 的打印预览)
+                const preview = parsedNotes.slice(0, 8).map((n, i) => {
+                    const w = ((n.pitch & 0x7F) << 9) | (n.beat & 0x1FF);
+                    return `#${i} ${pitchToName(n.pitch)}(${n.pitch}) beat=${n.beat} → 0x${w.toString(16).padStart(4, '0').toUpperCase()} [${(w >> 8).toString(16).padStart(2, '0').toUpperCase()} ${(w & 0xFF).toString(16).padStart(2, '0').toUpperCase()}]`;
+                }).join('<br>');
+                document.getElementById('note-preview').innerHTML = preview || '<span class="text-slate-500">无音符</span>';
+
+                document.getElementById('config-panel').classList.remove('hidden');
+                log(`MIDI 解析成功！选中音轨 #${chosenTrackIdx}，有效音符: ${parsedNotes.length} 个，等效 BPM: ${parsedBpm}`, "success");
+
+            } catch (err) {
+                log(`MIDI 解析失败: ${err.message}`, "error");
+            }
+        }
+
+        // 导出 HEX 调试文本 (对齐 Python 脚本生成的 *_fpga_hex.txt)
+        function exportHexText() {
+            if (!lastFrames03.length || !lastFrame04) {
+                alert("请先成功解析一个 MIDI 文件！");
+                return;
+            }
+            const slot = parseInt(document.getElementById('slot-select').value);
+            const name = document.getElementById('song-name-input').value || "SONG";
+            let txt = `=== 源文件: ${lastFileName} (音轨 ${chosenTrackIdx}) | 严格对齐 song_lib.v {note[15:9], beat[8:0]} ===\n`;
+            txt += `=== 槽位: ${slot} | 歌名: ${name} | BPM: ${parsedBpm} | 音符数: ${parsedNotes.length} ===\n\n`;
+            lastFrames03.forEach((frame, idx) => {
+                txt += `【步骤 ${idx + 1}】发送 0x03 曲谱数据块 #${idx} (共 ${frame.length} 字节):\n`;
+                txt += Array.from(frame).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ') + "\n\n";
+            });
+            txt += `【最后一步】发送 0x04 提交保存帧 (V2.1 LEN=20):\n`;
+            txt += Array.from(lastFrame04).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ') + "\n";
+
+            const blob = new Blob([txt], { type: 'text/plain' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = (lastFileName.replace(/\.(midi?|MIDI?)$/, '') || "song") + "_fpga_hex.txt";
+            a.click();
+            URL.revokeObjectURL(a.href);
+            log("HEX 调试文本已导出", "success");
+        }
+
+        // 蓝牙连接控制（针对 JDY-23 优化，精准匹配 FFE0 / FFE1 服务）
+        async function toggleBluetooth() {
+            if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+                bluetoothDevice.gatt.disconnect();
+                updateConnState(false);
+                log("蓝牙已断开", "info");
+                return;
+            }
+
+            try {
+                log("正在扫描 JDY-23 蓝牙设备...", "info");
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: [
+                        "0000ffe0-0000-1000-8000-00805f9b34fb", // JDY 系列标准透传服务
+                        "0000fff0-0000-1000-8000-00805f9b34fb",
+                        "6e400001-b5a3-f393-e0a9-e50e24dcca9e"  // Nordic UART
+                    ]
+                });
+
+                log(`已选择设备: ${bluetoothDevice.name}`, "success");
+                const server = await bluetoothDevice.gatt.connect();
+
+                log("正在获取 FFE0 串口透传服务...", "info");
+                const service = await server.getPrimaryService("0000ffe0-0000-1000-8000-00805f9b34fb");
+                bluetoothCharacteristic = await service.getCharacteristic("0000ffe1-0000-1000-8000-00805f9b34fb");
+
+                // 开启通知监听回包 0x82
+                await bluetoothCharacteristic.startNotifications();
+                bluetoothCharacteristic.addEventListener('characteristicvaluechanged', handleIncomingData);
+
+                updateConnState(true);
+                log("JDY-23 蓝牙连接成功并已开启回包监听！", "success");
+
+            } catch (error) {
+                log(`蓝牙连接失败: ${error.message || error}`, "error");
+                updateConnState(false);
+            }
+        }
+
+        function updateConnState(isConnected) {
+            const dot = document.getElementById('conn-dot');
+            const text = document.getElementById('conn-text');
+            if (isConnected) {
+                dot.className = "w-3 h-3 bg-emerald-500 rounded-full animate-none shadow-[0_0_10px_#10b981]";
+                text.innerText = "已连接 JDY-23";
+            } else {
+                dot.className = "w-3 h-3 bg-slate-500 rounded-full animate-pulse";
+                text.innerText = "连接 JDY-23 蓝牙";
+            }
+        }
+
+        // 回包 status 含义（对齐 song_lib.v 语义）
+        function statusText(status) {
+            if (status === null || status === undefined) return "超时无回包 (帧损坏被静默丢弃)";
+            switch (status) {
+                case 0x00: return "确认 (0x03 下载块 / 0x06 键位表)";
+                case 0x01: return "0x04 提交成功！曲库已更新";
+                case 0x02: return "提交被拒：目标槽写保护 (该槽正在播放)";
+                case 0x03: return "提交被拒：曲库满 (目标槽为空且其余槽全满)";
+                case 0x04: return "删除成功";
+                case 0x05: return "删除被拒：目标槽正在播放";
+                default: return `未知状态 (0x${status.toString(16)})`;
+            }
+        }
+
+        // 处理底层收到的 0x82 回包
+        let rxBuffer = [];
+        let pendingAckResolve = null;   // 等待回包的 Promise resolve
+        function handleIncomingData(event) {
+            const value = event.target.value;
+            for (let i = 0; i < value.byteLength; i++) {
+                rxBuffer.push(value.getUint8(i));
+            }
+            while (rxBuffer.length >= 6) {
+                if (rxBuffer[0] === 0xA5 && rxBuffer[1] === 0x5A && rxBuffer[2] === 0x82) {
+                    const frame = rxBuffer.splice(0, 6);
+                    const status = frame[4];
+                    log(`RX 回包: [${frame.map(b=>b.toString(16).padStart(2,'0')).join(' ').toUpperCase()}] -> ${statusText(status)}`, status === 1 || status === 0 || status === 4 ? 'success' : 'error');
+                    // 唤醒正在等待回包的上传/删除/键位流程
+                    if (pendingAckResolve) {
+                        const resolve = pendingAckResolve;
+                        pendingAckResolve = null;
+                        resolve(status);
+                    }
+                } else {
+                    rxBuffer.shift();
+                }
+            }
+        }
+
+        // 计算 V2.1 校验和 (与 Python build_frame 一致)
+        function buildFrame(cmd, payload) {
+            let len = payload.length;
+            let xor = cmd ^ len;
+            for (let b of payload) xor ^= b;
+            let frame = new Uint8Array(4 + len + 1);
+            frame[0] = 0xA5;
+            frame[1] = 0x5A;
+            frame[2] = cmd;
+            frame[3] = len;
+            frame.set(payload, 4);
+            frame[4 + len] = xor;
+            return frame;
+        }
+
+        const delay = ms => new Promise(res => setTimeout(res, ms));
+
+        /* ==========================================================
+         * 可靠传输（协议 v2.1 §5）：
+         * 1. 每发一帧必须等 0x82 回包再发下一帧（超时=帧损坏）
+         * 2. 0x03/0x04 超时 → 从该曲第一个 0x03 块整首重发（FPGA 坏帧自动回滚）
+         * 3. 注意：0x03 块回包的 status 是上一次提交/删除的残留值(song_lib 只在
+         *    commit/delete 时更新)，仅用于确认链路通；只有 0x04/0x05 的回包
+         *    status 才反映本次操作结果
+         * ========================================================== */
+
+        // 等待一帧 0x82 回包；先挂 resolve 再由 handleIncomingData 唤醒；超时返回 null
+        // 超时需覆盖：整帧 9600 波特入帧 (~256ms/246B) + 回包 + BLE 通知延迟，取 2000ms
+        function waitForAck(timeoutMs = 2000) {
+            return new Promise(resolve => {
+                pendingAckResolve = resolve;
+                setTimeout(() => {
+                    if (pendingAckResolve === resolve) {
+                        pendingAckResolve = null;
+                        resolve(null);
+                    }
+                }, timeoutMs);
+            });
+        }
+
+        // 分块流式写入：按 9600-8N1 ≈ 960 B/s 的节奏发块（每字节 ~1.04ms，取 1.4 倍裕量），
+        // 保证任何 JDY-23 模块缓冲都不会溢出；FPGA 侧只认连续字节流，与 BLE 写入边界无关
+        // （手机端 MTU 未协商到 249+ 时，一次写 246 字节会被底层静默丢弃，必须分块）
+        async function writeStream(u8) {
+            const cs = parseInt(document.getElementById('chunk-size-select').value);
+            for (let i = 0; i < u8.length; i += cs) {
+                const part = u8.subarray(i, Math.min(i + cs, u8.length));
+                await bluetoothCharacteristic.writeValueWithoutResponse(part);
+                await delay(Math.ceil(part.length * 1.4));
+            }
+        }
+
+        // 发一帧（分块流式）并等待回包，返回 status（null = 超时）
+        async function sendFrameWaitAck(frame) {
+            const ackPromise = waitForAck(2000);
+            await writeStream(frame);
+            return await ackPromise;
+        }
+
+        // ===== 槽位管理：0x05 删除曲谱 =====
+        // 动态生成 8 个槽位按钮
+        (function initSlotGrid() {
+            const grid = document.getElementById('slot-grid');
+            for (let s = 0; s < 8; s++) {
+                const btn = document.createElement('button');
+                btn.id = `btn-del-slot-${s}`;
+                btn.innerHTML = `<span class="block text-base font-bold">槽 ${s}</span><span class="block text-[10px] text-slate-500">删除曲谱</span>`;
+                btn.className = "py-3 rounded-xl text-sm font-semibold bg-slate-800 border border-slate-700 hover:bg-rose-900/60 hover:border-rose-600 active:scale-95 transition";
+                btn.onclick = () => deleteSlot(s);
+                grid.appendChild(btn);
+            }
+        })();
+
+        // 发送 0x05 删除帧: payload = slot(1)，回包 status 0x04=成功 / 0x05=被拒(正在播放)
+        async function deleteSlot(slot) {
+            if (!bluetoothCharacteristic) {
+                alert("请先点击右上角连接 JDY-23 蓝牙！");
+                return;
+            }
+            if (!confirm(`确认删除 槽位 ${slot} 中的曲谱？`)) return;
+
+            const btn = document.getElementById(`btn-del-slot-${slot}`);
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'pointer-events-none');
+
+            try {
+                const frame = buildFrame(0x05, [slot & 0x07]);
+                log(`TX -> 0x05 删除槽位 ${slot}: [${Array.from(frame).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}]，等待回包...`, "tx");
+                const st = await sendFrameWaitAck(frame);
+                if (st === 0x04) {
+                    log(`槽位 ${slot} 删除成功！曲库列表已更新。`, "success");
+                } else if (st === 0x05) {
+                    log(`槽位 ${slot} 删除被拒：该槽正在播放，请先停止播放再删。`, "error");
+                } else if (st === null) {
+                    log(`删除槽位 ${slot} 超时无回包 (链路丢字节)，可直接重试。`, "error");
+                } else {
+                    log(`删除槽位 ${slot} 回包异常: ${statusText(st)}`, "error");
+                }
+            } catch (err) {
+                log(`删除槽位 ${slot} 失败: ${err}`, "error");
+            } finally {
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'pointer-events-none');
+                }, 500);
+            }
+        }
+
+        // ==========================================================
+        // 自定义键盘：0x06 键位表（协议 §8）
+        // - 帧: A5 5A 06 10 [key0..key15] XOR，回包 0x00=成功、立即生效
+        // - keyN = 物理键 N 的 MIDI 音高，0 = 静音
+        // - 掉电恢复默认顺阶 → 网页用 localStorage 记住上次发送的表
+        // ==========================================================
+        const KM_DEFAULT = [60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83, 84, 86];
+        // 协议 §8.4 推荐预设（MIDI 值，与文档整帧十六进制一致）
+        const KM_PRESETS = {
+            scale: { name: "大阶 SCALE_C",  vals: [60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83, 84, 86] },
+            chrom: { name: "半音阶 CHROM",  vals: [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75] },
+            penta: { name: "五声 PENTA",    vals: [60, 62, 64, 67, 69, 72, 74, 76, 79, 81, 84, 86, 88, 91, 93, 96] },
+            chord: { name: "和弦 CHORD",    vals: [48, 52, 55, 60, 53, 57, 60, 65, 55, 59, 62, 67, 57, 60, 64, 69] }
+        };
+        let keymapState = KM_DEFAULT.slice();
+        let keymapDirty = false;   // 本地已改但尚未发板
+
+        // 启动时恢复上次发送的表（协议建议 App 自行持久化）
+        try {
+            const saved = JSON.parse(localStorage.getItem('fpga_keymap_v1'));
+            if (Array.isArray(saved) && saved.length === 16 && saved.every(v => Number.isInteger(v) && v >= 0 && v <= 127)) {
+                keymapState = saved;
+            }
+        } catch (e) { /* 忽略本地存储异常 */ }
+
+        function midiName(m) {
+            if (m === 0) return "静音";
+            return `${NOTE_NAMES[m % 12]}${Math.floor(m / 12) - 1}`;
+        }
+
+        function saveKeymapLocal() {
+            try { localStorage.setItem('fpga_keymap_v1', JSON.stringify(keymapState)); } catch (e) { /* 忽略 */ }
+        }
+
+        function kmAdjust(idx, delta) {
+            keymapState[idx] = Math.min(127, Math.max(0, keymapState[idx] + delta));
+            keymapDirty = true;
+            saveKeymapLocal();
+            renderKeymap();
+        }
+
+        function kmMute(idx) {
+            keymapState[idx] = 0;
+            keymapDirty = true;
+            saveKeymapLocal();
+            renderKeymap();
+        }
+
+        // 渲染 16 键编辑网格
+        function renderKeymap() {
+            const grid = document.getElementById('keymap-grid');
+            grid.innerHTML = '';
+            for (let i = 0; i < 16; i++) {
+                const m = keymapState[i];
+                const muted = (m === 0);
+                const card = document.createElement('div');
+                card.className = `rounded-xl border p-3 text-center bg-slate-950/60 ${muted ? 'border-rose-800/80' : 'border-slate-700'}`;
+                card.innerHTML = `
+                    <div class="text-[10px] text-slate-500">键 ${i}</div>
+                    <div class="text-lg font-bold ${muted ? 'text-rose-400' : 'text-cyan-400'}">${midiName(m)}</div>
+                    <div class="text-[10px] text-slate-500 font-mono">MIDI ${m}</div>
+                    <div class="grid grid-cols-4 gap-1 mt-2 text-xs">
+                        <button onclick="kmAdjust(${i},-12)" class="py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 transition" title="-12 半音">-12</button>
+                        <button onclick="kmAdjust(${i},-1)"  class="py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 transition" title="-1 半音">−</button>
+                        <button onclick="kmAdjust(${i},+1)"  class="py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 transition" title="+1 半音">＋</button>
+                        <button onclick="kmAdjust(${i},+12)" class="py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 transition" title="+12 半音">+12</button>
+                    </div>
+                    <button onclick="kmMute(${i})" class="mt-1 w-full py-1 rounded-lg text-[11px] ${muted ? 'bg-emerald-900/60 text-emerald-400 hover:bg-emerald-800/60' : 'bg-slate-800 text-slate-400 hover:bg-rose-900/60 hover:text-rose-300'} active:scale-95 transition">
+                        ${muted ? '恢复发声 (设为 60)' : '静音'}
+                    </button>`;
+                grid.appendChild(card);
+            }
+            // 状态角标
+            const btn = document.getElementById('btn-keymap');
+            btn.classList.toggle('ring-2', keymapDirty);
+            btn.classList.toggle('ring-amber-400', keymapDirty);
+        }
+
+        // 发送 0x06 整表（16 字节），回包 0x00=成功
+        async function sendKeymap() {
+            if (!bluetoothCharacteristic) {
+                alert("请先点击右上角连接 JDY-23 蓝牙！");
+                return;
+            }
+            const btn = document.getElementById('btn-keymap');
+            btn.disabled = true;
+            btn.classList.add('opacity-60');
+            try {
+                const frame = buildFrame(0x06, keymapState.slice());
+                log(`TX -> 0x06 键位整表: [${Array.from(frame).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}]，等待回包...`, "tx");
+                const st = await sendFrameWaitAck(frame);
+                if (st === 0x00) {
+                    keymapDirty = false;
+                    saveKeymapLocal();
+                    log(`键位表写入成功并已生效！当前表: ${keymapState.map(m => midiName(m)).join(' / ')}`, "success");
+                } else if (st === null) {
+                    log(`键位表超时无回包 (链路丢字节)，请直接重发。`, "error");
+                } else {
+                    log(`键位表回包异常: ${statusText(st)}`, "error");
+                }
+            } catch (err) {
+                log(`键位表发送失败: ${err}`, "error");
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60');
+                renderKeymap();
+            }
+        }
+
+        // 预设：加载并立即发送
+        async function applyPreset(key) {
+            const p = KM_PRESETS[key];
+            if (!p) return;
+            if (!bluetoothCharacteristic) {
+                alert("请先点击右上角连接 JDY-23 蓝牙！");
+                return;
+            }
+            keymapState = p.vals.slice();
+            keymapDirty = true;
+            renderKeymap();
+            log(`加载预设「${p.name}」并立即发送...`, "info");
+            await sendKeymap();
+        }
+
+        renderKeymap();
+
+        // 开始烧录上传（可靠模式：逐帧等回包，坏帧从第一个 0x03 块整首重发）
+        async function startUpload() {
+            if (!bluetoothCharacteristic) {
+                alert("请先点击右上角连接 JDY-23 蓝牙！");
+                return;
+            }
+            if (parsedNotes.length === 0) {
+                alert("请先上传有效的 MIDI 文件！");
+                return;
+            }
+
+            const slot = parseInt(document.getElementById('slot-select').value);
+            const songName = document.getElementById('song-name-input').value.trim() || `SONG${slot + 1}`;
+            const { nameBytes } = formatLcdSongName(songName, slot);
+
+            const btn = document.getElementById('btn-upload');
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progress-bar');
+            const progressStatus = document.getElementById('progress-status');
+            const progressPercent = document.getElementById('progress-percent');
+
+            // 组帧：16-bit 音符字 word = (pitch << 9) | beat，先发高 8 位再发低 8 位
+            let rawBytes = [];
+            parsedNotes.forEach(n => {
+                let word = ((n.pitch & 0x7F) << 9) | (n.beat & 0x1FF);
+                rawBytes.push((word >> 8) & 0xFF);
+                rawBytes.push(word & 0xFF);
+            });
+            lastFrames03 = [];
+            for (let i = 0; i < rawBytes.length; i += 240) {
+                lastFrames03.push(buildFrame(0x03, [slot & 0x07, ...rawBytes.slice(i, i + 240)]));
+            }
+            const cnt = parsedNotes.length;
+            lastFrame04 = buildFrame(0x04, [
+                slot & 0x07,
+                parsedBpm & 0xFF,
+                (cnt >> 8) & 0xFF,
+                cnt & 0xFF,
+                ...nameBytes
+            ]);
+
+            btn.disabled = true;
+            progressContainer.classList.remove('hidden');
+            pendingAckResolve = null;
+
+            const MAX_ATTEMPTS = 3;
+            let finished = false;
+
+            try {
+                for (let attempt = 1; attempt <= MAX_ATTEMPTS && !finished; attempt++) {
+                    log(`—— 第 ${attempt}/${MAX_ATTEMPTS} 次尝试：从 0x03 块 #0 开始整首发送 (共 ${lastFrames03.length} 块) ——`, "info");
+                    let needRetry = false;
+
+                    // 1) 逐帧发送 0x03 数据块，每帧等回包
+                    for (let idx = 0; idx < lastFrames03.length; idx++) {
+                        progressStatus.innerText = `发送 0x03 块 #${idx + 1}/${lastFrames03.length} (第${attempt}次)...`;
+                        progressPercent.innerText = Math.round(((idx + 1) / (lastFrames03.length + 1)) * 100) + '%';
+                        progressBar.style.width = Math.round(((idx + 1) / (lastFrames03.length + 1)) * 100) + '%';
+
+                        log(`TX -> 0x03 块 #${idx} (${lastFrames03[idx].length} 字节)，等待回包...`, "tx");
+                        const st = await sendFrameWaitAck(lastFrames03[idx]);
+                        if (st === null) {
+                            log(`块 #${idx} 超时无回包！按协议 §5 从第一个 0x03 块整首重发。`, "error");
+                            needRetry = true;
+                            break;
+                        }
+                        // 0x03 的 status 是残留值，仅确认链路通
+                        log(`块 #${idx} 链路确认 OK (status=0x0${st.toString(16)} 为残留值，忽略)`, "rx");
+                        await delay(10);
+                    }
+                    if (needRetry) continue;
+
+                    // 2) 发送 0x04 提交帧并检查真实状态
+                    progressStatus.innerText = `发送 0x04 提交帧...`;
+                    progressPercent.innerText = '100%';
+                    progressBar.style.width = '100%';
+                    log(`TX -> 0x04 提交帧 (槽${slot}, BPM ${parsedBpm}, ${cnt} 音, "${songName}")，等待回包...`, "tx");
+                    const st4 = await sendFrameWaitAck(lastFrame04);
+
+                    if (st4 === 0x01) {
+                        progressStatus.innerText = "提交成功！曲库已更新";
+                        log(`提交成功！曲库页 (APP → 1>SONGS) 现在应显示 "${songName}" / ${cnt} 音 / BPM ${parsedBpm}。`, "success");
+                        finished = true;
+                    } else if (st4 === 0x02 || st4 === 0x03) {
+                        progressStatus.innerText = `提交被拒：${statusText(st4)}`;
+                        log(`提交被拒 (${statusText(st4)})。重发无效：0x02→先停止该槽播放；0x03→删除不用的槽腾位置。`, "error");
+                        finished = true; // 被拒不重试
+                    } else if (st4 === null) {
+                        log(`0x04 超时无回包！按协议 §5 从第一个 0x03 块整首重发。`, "error");
+                        // needRetry 隐含：继续下一轮 attempt
+                    } else {
+                        log(`0x04 回包状态异常: ${statusText(st4)}，停止重试。`, "error");
+                        finished = true;
+                    }
+                }
+
+                if (!finished) {
+                    log(`已重试 ${MAX_ATTEMPTS} 次仍未成功。排查建议：1) 确认分块已选 20 字节 (手机大 MTU 未协商时整帧写入会被静默丢弃)；2) 靠近板子并重连蓝牙；3) 确认波特率 9600、TXD/RXD 未接反；4) 用"导出 HEX 调试文本"+串口助手旁路对比。`, "error");
+                    progressStatus.innerText = "传输失败";
+                }
+                progressPercent.innerText = finished ? '100%' : '0%';
+
+            } catch (err) {
+                log(`烧录过程发生异常: ${err}`, "error");
+            } finally {
+                btn.disabled = false;
+                pendingAckResolve = null;
+            }
+        }
+
+        // ===== PWA Service Worker 注册（HTTPS 或 localhost 下生效；离线可运行） =====
+        if ('serviceWorker' in navigator &&
+            (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('ServiceWorker 注册成功, scope:', reg.scope))
+                    .catch(err => console.warn('ServiceWorker 注册失败(不影响在线使用):', err));
+            });
+        }
+    </script>
+</body>
+</html>
